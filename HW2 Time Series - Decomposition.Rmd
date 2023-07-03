@@ -1,0 +1,134 @@
+---
+title: 'Time Series Analysis - Homework #2'
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+
+
+```
+
+# Question 1
+
+Load the visitors.rda dataset, make a time plot of your data and describe the main features of the series
+
+```{r section1, include=TRUE}
+
+load('visitors.rda')
+data <- ts(visitors[c("Arrivals")], frequency = 4, 
+           start = c(1981, 1), end = c(2012,3))
+
+autoplot(data)
+
+```
+
+**Answer:** The time plot has upward trend until about 2000 where it starts to level off. There is no clear seasonality nor a clear cyclic pattern.
+
+# Question 2
+
+What is the appropriate Holt-Winters method for this data set (multiplicative / additive)? Why?
+
+**Answer:** The appropriate Holt-Winters method is multiplicative because the seasonal decomposition chart is more stable between 0.95 and 1.05. This indicates a seasonal variation increases (multiplies) over time.
+
+```{r section2, include=TRUE}
+
+# Additive Decomposition
+decompose(data, type='additive') %>% plot()
+
+# Multiplicative Decomposition
+decompose(data, type='multiplicative') %>% plot()
+
+```
+
+
+# Question 3
+
+Use the hw() function to forecast the next 24 months using Holt-Winters’ methods. Experiment with the following methods
+
+* Linear trend with additive seasonality
+* Linear trend with multiplicative seasonality
+* Linear trend with additive seasonality and damping
+* Linear trend with multiplicative seasonality and damping
+
+```{r section3, include=TRUE}
+
+add <- hw(y=data, h=24, seasonal = 'additive')
+
+mult <- hw(y=data, h=24, seasonal = 'multiplicative')
+
+add_damp <- hw(y=data, h=24, seasonal = 'additive', damped=TRUE)
+
+mult_damp <- hw(y=data, h=24, seasonal = 'multiplicative', damped=TRUE)
+
+plot(add)
+plot(mult)
+plot(add_damp)
+plot(mult_damp)
+
+```
+
+# Question 4
+
+Use the accuracy() function to compare the Root-Mean-Square-Error (RMSE) values of the forecasts from the various methods. Which do you prefer and why?
+
+```{r section4, include=TRUE}
+
+paste('Additive RMSE:', accuracy(add)[2])
+paste('Multiplicative RMSE:', accuracy(mult)[2])
+paste('Additive with Damping RMSE:', accuracy(add_damp)[2])
+paste('Multiplicative with Damping RMSE:', accuracy(mult_damp)[2])
+
+```
+**Answer:** I prefer the Multiplicative Seasonality with Damping model because it has the smallest RMSE value at 7460. The multiplicative aspect makes sense as I stated above that there is a multiplying factor on seasonality over time. The dampening helps reduce the magnitude of future seasonal variations as the forecast extends -- in this instance this helps reduce the RMSE.
+
+# Question 5
+
+Use the checkresiduals() function to check that the residuals from the best model look like white noise and provide a summary of the model’s smoothing parameters using the summary() function.
+
+```{r section5, include=TRUE}
+
+checkresiduals(mult_damp)
+
+summary(mult_damp)
+
+```
+**Answer:** The smoothing parameters of the best performing model (Multiplicative with Damping) are as follows:
+
+* alpha = 0.52 
+* beta  = 0.0027 
+* gamma = 1e-04 
+* phi   = 0.98 
+
+A higher alpha (level smoothing) value indicates more weight is given to recent observations resulting in a model that quickly adapts to changes. A smaller beta (trend smoothing) value means more stable trend estimates. The small Gamma seasonality smoothing means the impact of recent seasonal fluctuations are dampenened, resulting in a smoother and more stable seasonal estimate. Lastly the phi value controls the rate of dampening, in this case more dampening is taking place.
+
+The residuals show signs of not being white noise. This is because there are some slight patterns in the plot. Additionally the ACF plot shows some significance at various lags, specifically 4, 5, 16. The residual plot is also not evenly distributed. The Ljung-Box test's small p-value tells us to reject the null hypothesis and conclude autocorrelation exists and the residuals are not white noise. Though this was the best of the 4 models ran, we can assume there is information left in the residuals that should be used in computing forecasts and improvements can be made to the predictive model.
+
+# Question 6
+
+Use the snaive() function to forecast the next 24 months, and the accuracy() function to evaluate the model. Did your best model beat the seasonal naïve approach?
+
+```{r section6, include=TRUE}
+
+seasonal_naive <- snaive(y=data, h=24)
+
+autoplot(seasonal_naive) +
+  labs(x="Year", y="# Arrivals", title="Seasonal Naive Method")
+
+paste("Seasonal Naive RMSE:", accuracy(seasonal_naive)[2])
+paste("Best Performing Model RMSE:", accuracy(mult_damp)[2])
+
+accuracy(mult_damp)[2] - accuracy(seasonal_naive)[2]
+
+```
+**Answer:** My best performing Multiplicative with Dampening model (RMSE = 7,460) performed better than the naive method (RMSE = 10,298) with a difference of 2,838.
+
