@@ -1,0 +1,272 @@
+---
+title: "Time Series Homework 6"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+For this assignment, you will use the Monthly Australian short-term overseas visitors May 1985-April 2005 dataset (Dataset: visitors_monthly.rda)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+library(forecast)
+library(tseries)
+library(TSA)
+library(readxl)
+library(purrr)
+
+```
+
+
+# Question 1
+
+Load and plot the visitors dataset and plot the dataset with and without the Box Cox transformation. Describe the main dataset characteristics.
+
+```{r q1, include=TRUE}
+
+load('visitors_monthly.rda')
+
+# Keep only relevant columns and rename
+data <- visitors %>% select(X,x) %>% rename(time=X, count=x)
+
+# Convert to Time Series
+#data <- as.ts(data$count, start=1, end=240, frequency=1)
+data <- ts(visitors$x, start = c(1985,5), end = c(2005,4),frequency = 12)
+
+# Plot with and without Box Cox
+ts.plot(data)
+ts.plot(BoxCox(data, lambda="auto"))
+
+bc_data <- BoxCox(data, lambda="auto")
+bc_value <- BoxCox.lambda(data)
+
+
+```
+
+
+**Answer:** The dataset has upward trend, seasonality, and variance is increasing over time. This variance change indicates a Box Cox transformation is appropriate. Once this transformation is applied, the variance becomes more constant and does not increase over time. There is still upward trend and seasonality.
+
+# Question 2
+
+Build two models using the entire visitors dataset:
+
+* Model 1: Let the auto.arima() function determine the best order 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃, 𝑄, 𝐷)𝑠 model.
+* Model 2: Let the ets() function determine the best model for exponential smoothing.
+
+```{r q2, include=TRUE}
+
+m1 <- auto.arima(data, seasonal = TRUE, trace = TRUE, lambda = "auto")
+m1
+arimaorder(m1)  
+
+m2 <- ets(data, trace = FALSE, lambda = "auto")
+m2
+
+```
+
+**Summary:** The best model 1 according to auto.arima is ARIMA(0,1,1)(2,1,1) 12. The best Model 2 has smoother parameters of alpha=0.613, beta=1e-04, gamma=0.1629. Model 1 has an AICc of 28.41 and Model 2 has an AICc of 668.69 making Model 1 stronger for this dataset.
+
+# Question 3
+
+In this section you will apply the time-series cross validation method to train and test various models. Use the following values when training and testing the models:
+
+* Set the minimum number of samples required to train the model to 160 (i.e., this is the minimum number of samples in the sliding window and the initial number of samples in the expanding window method.)
+* Set the number the forecast horizon, h, to 1 year (i.e., 12 months.)
+* Recall that the period, 𝑝, is equal to 12 months
+* Use a single observation incrementation in each iteration (i.e., shift the training set forward by 1
+observation.)
+
+For each iteration, apply the following 4 forecasts:
+
+1. Use the Arima() function to estimate a SARIMA([1,0,1][0,1,2]12 with drift model for:
+
+* Expanding training window and
+* Sliding training window
+
+2. Use the Exponential Smoothing function ets() to estimate a MAM (Multiplicative Error, Additive
+trend, multiplicative Season) model for:
+
+* Expanding training window
+* Sliding training window
+
+For each test window record the:
+
+* One-year forecast horizon error
+* Estimated model AICc value.
+
+For each of the four models above, calculate and plot the
+
+1. Mean Absolute Forecast Error (MAE) vs forecast horizon.
+2. Root-square Forecast Error (RMSE) vs forecast horizon.
+3. AICc vs iteration number
+
+Discuss your results.
+
+```{r q3, include=TRUE}
+
+defaultW <- getOption("warn") 
+options(warn = -1)
+
+k <- 160 # minimum data length for fitting a model
+n <- length(data) # Number of data points
+p <- 12 # Period
+H <- 12 # Forecast Horizon
+
+st <- tsp(data)[1]+(k-2)/p #  gives the start time in time units, #1998.5
+
+mae_exp <- matrix(NA,n-k,H)
+mae_slid <- rmse_slid <- rmse_exp <- matrix(NA,n-k,H)
+aicc_slid <- aicc_exp <- vector(mode = "numeric", length = (n-k))
+
+# ---------------------------------------------------------------
+# --------------------- ARIMA ---------------------
+# ---------------------------------------------------------------
+
+for(i in 1:(n-k))
+{
+  # EXPANDING WINDOW - 1
+  expand <- window(data, end=st + i/p)
+  
+  # SLIDING WINDOW - 2
+  slide <- window(data, start=st+(i-k+1)/p, end=st+i/p) 
+  
+  test <- window(data, start=st + (i+1)/p, end=st + (i+H)/p)
+  
+  fit_expand <- Arima(expand, 
+                      order=c(1,0,1), 
+                      seasonal=list(order=c(0,1,2), 
+                      period=p), include.drift=TRUE, lambda="auto", method="ML")
+  
+  fcast_expand <- forecast(fit_expand, h=H)
+  
+  fit_slide <- Arima(slide, 
+                     order=c(1,0,1), 
+                     seasonal=list(order=c(0,1,2), 
+                     period=p), include.drift=TRUE, lambda="auto", method="ML")
+  
+  fcast_slide <- forecast(fit_slide, h=H)
+  
+  # AICc
+  aicc_exp[i] <- fit_expand$aicc
+  aicc_slid[i] <- fit_slide$aicc
+  
+  # MAE
+  mae_exp[i,1:length(test)] <- abs(fcast_expand[['mean']]-test)
+  mae_slid[i,1:length(test)] <- abs(fcast_slide[['mean']]-test)
+  
+  # RMSE
+  rmse_slid[i,1:length(test)] <- (test - fcast_slide[['mean']])^2
+  rmse_exp[i,1:length(test)] <- (test - fcast_expand[['mean']])^2
+}
+
+# ---------------------------------------------------------------
+# --------------------- ETS -------------------------------------
+# ---------------------------------------------------------------
+
+mae_ets_exp <- matrix(NA, n-k, H)
+mae_ets_slid <- rmse_ets_slid <- rmse_ets_exp <- matrix(NA,n-k,H)
+aicc_ets_slid <- aicc_ets_exp <- vector(mode = "numeric", length = (n-k))
+
+for(i in 1:(n-k))
+{
+  # EXPANDING WINDOW - 1
+  expand <- window(data, end=st + i/p)
+  
+  # SLIDING WINDOW - 2
+  slide <- window(data, start=st+(i-k+1)/p, end=st+i/p)
+  
+  test <- window(data, start=st + (i+1)/p, end=st + (i+H)/p)
+  
+  fit_expand <- ets(expand,
+               model = "MAM")
+  fcast_expand <- forecast(fit_expand, h=H)
+  
+  fit_slide <- ets(slide,
+               model = "MAM")
+  fcast_slide <- forecast(fit_slide, h=H)
+  
+  # AIC
+  aicc_ets_exp[i] <- fit_expand$aicc# %>% AIC()
+  aicc_ets_slid[i] <- fit_slide$aicc# %>% AIC()
+  
+  # MAE
+  mae_ets_exp[i,1:length(test)] <- abs(fcast_expand[['mean']]-test)
+  mae_ets_slid[i,1:length(test)] <- abs(fcast_slide[['mean']]-test)
+  
+  # RMSE
+  rmse_ets_slid[i,1:length(test)] <- (test - fcast_slide[['mean']])^2
+  rmse_ets_exp[i,1:length(test)] <- (test - fcast_expand[['mean']])^2
+}
+
+# -----------------------------------------------
+# Generate Plot - MAE
+plot(1:12, colMeans(mae_exp, na.rm=TRUE), type="l",col=1, 
+     xlab="horizon", ylab="MAE",
+     main="Mean Absolute Error vs Forecast Horizon", 
+     ylim = c(10,40))
+# Add ARIMA Sliding MAE Line
+lines(1:12, colMeans(mae_slid, na.rm=TRUE), type="l",col=2)
+# Add ETS Expanding MAE Line
+lines(1:12, colMeans(mae_ets_exp, na.rm=TRUE), type="l",col=3)
+# Add ETS Sliding MAE Line
+lines(1:12, colMeans(mae_ets_slid, na.rm=TRUE), type="l",col=4)
+# Add Legend
+legend("bottomright",legend=c("ARIMA - Expanding","ARIMA - Sliding",
+                          'ETS - Expanding',"ETS - Sliding"),col=1:4,lty=1)
+
+# -----------------------------------------------
+# Generate Plot - RMSE 
+plot(1:12, colMeans(rmse_exp, na.rm=TRUE), type="l",col=1, 
+     xlab="horizon", ylab="RMSE",
+     main="RMSE vs Forecast Horizon")#, 
+     #ylim = c(10,40))
+# Add ARIMA Sliding RMSE Line
+lines(1:12, colMeans(rmse_slid, na.rm=TRUE), type="l",col=2)
+# Add ETS Expanding RMSE Line
+lines(1:12, colMeans(rmse_ets_exp, na.rm=TRUE), type="l",col=3)
+# Add ETS Sliding RMSE Line
+lines(1:12, colMeans(rmse_ets_slid, na.rm=TRUE), type="l",col=4)
+# Add Legend
+legend("bottomright",legend=c("ARIMA - Expanding","ARIMA - Sliding",
+                          'ETS - Expanding',"ETS - Sliding"),col=1:4,lty=1)
+
+# -----------------------------------------------
+# Generate AICc
+plot(aicc_exp, type="l", col=1, xlab="Iteration", ylab="AICc", main="AICc vs Iteration", ylim=c(-900,2500))
+# Add ARIMA Sliding AICc
+lines(1:80, aicc_slid, col=2)
+# Add ETS Expanding AICc
+lines(1:80, aicc_ets_exp, col=3)
+# Add ETS Sliding AICc
+lines(1:80, aicc_ets_slid, col=4)
+# Add Legend
+legend("bottomleft",legend=c("ARIMA - Expanding","ARIMA - Sliding",
+                          'ETS - Expanding',"ETS - Sliding"),col=1:4,lty=1)
+```
+
+
+**Summary:**
+
+* MAE: The best performing model for Mean Absolute Error (MAE) is ARIMA with sliding. ARIMA with expanding performs a bit better than ETS Sliding and then ETS expanding has the highest MAE values.
+
+* RMSE: The best performing model for Root Mean Squared Error (RMSE) is ARIMA with sliding. ETS with sliding performs next best followed by ARIMA expanding then ETS expanding has the highest RMSE values.
+
+* AICc: The best performing model for AICc is ARIMA sliding followed by ARIMA expanding. Both ETS sliding and expanding have much higher AICc values with expanding diverging higher and sliding diverging lower.
+
+Overall it appears ARIMA with sliding performs best from an MAE, RMSE, and AICc standpoint.
+
+# Question 4
+
+What are the disadvantages of the above methods? What would be a better approach to estimate the
+models? Hint: How were the SARIMA and exponential time series models determined in question 3?
+
+**Answer:** 
+
+* The sliding window has a disadvantage in that as time moves forward the sliding window removes historical observations. This could be a good thing if more recent observations have greater value but overall having a larger historical view is more useful. The expanding window captures this historical information but may not be ideal where primarily recent observations provide the most value. 
+
+* For these models we pre-defined the model orders. A better approach would be to let ARIMA find the ideal orders dynamically for the various scenarios. This would better capture the appropriate differencing, moving averages, autoregression, and seasonality for the applications. These orders could be included within the cross-validation process across various training datasets for the models to be fit on and then compared with on the validation results.
+

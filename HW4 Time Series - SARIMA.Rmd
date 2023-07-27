@@ -1,0 +1,235 @@
+---
+title: "Time Series Homework #4"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+library(forecast)
+library(tseries)
+library(TSA)
+library(readxl)
+library(purrr)
+
+```
+
+# Question 1
+
+Combine the data from the 16 files into a single dataset and plot it. Describe the dataset
+characteristics.
+
+```{r q1, include=TRUE, results=FALSE, warning=FALSE, echo=FALSE}
+
+library(readxl)
+library(xts)
+library(forecast)
+file.list <- list.files(path = "/Users/lmschwenke/Downloads/Traffic_Flow_Data/",pattern='*.xls')
+setwd("/Users/lmschwenke/Downloads/Traffic_Flow_Data/")
+
+datelist <- gsub('I-57-','',file.list)
+datelist <- gsub('.xls','',datelist)
+dateSeq <- as.Date(datelist, format = "%Y-%B-%d")
+
+ordertoread <- rank(dateSeq)
+dateSeq <- as.character(dateSeq)
+alldata <- NULL
+
+for (i in seq_along(file.list)) {
+  realorder <- which(ordertoread %in% i)
+  data <- read_excel(file.list[realorder], sheet = "Sheet0", skip = 2)
+  alldata <- c(alldata,as.numeric(as.data.frame(data)[3:26,5]))
+}
+
+time_index <- seq(from = as.POSIXct("2013-06-16 01:00:00"), 
+                  to = as.POSIXct("2013-07-01 24:00:00"), 
+                  by = "hour")
+
+eventdata <- ts(alldata, frequency = 1)
+autoplot(eventdata) 
+
+time_stamped_data <- xts(alldata, order.by = time_index)
+# ets(eventdata)
+# 
+# plot(eventdata)
+# 
+# time_data <- ts(alldata, start='2013-06-16 01:00:00', end='2013-07-01 24:00:00')
+
+```
+
+**Answer:** The data has constant variance and mean but shows signs of seasonality. There is not a trend.
+
+# Question 2
+
+Split the dataset into a training dataset which includes 6/16/2013 - 6/30/2013 samples and a
+test dataset which includes 7/1/2013 samples and plot the ACF and PACF.
+
+```{r q2, include=TRUE}
+
+# Train = 6/16/2013 - 6/30/2013
+train <- as.ts(eventdata[1:360])
+
+# Test = 7/1/2013
+test <- as.ts(eventdata[360:length(eventdata)])
+  
+
+acf(train)
+pacf(train)
+
+acf(test)
+pacf(test)
+
+```
+
+
+# Question 3
+
+Build an 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞) model using the training dataset and R auto.arima() function. Change
+the values of 𝑝 and 𝑞 and determine the best model using AICc and BIC values. Do AICc and BIC
+select the same model as the best model? For each derived model, review the residual plots for
+the residuals ACF and normality.
+
+```{r q3, include=TRUE}
+
+# AIC
+train_auto_aic <- auto.arima(train, seasonal=FALSE, trace=TRUE, ic = c("aicc"))
+train_auto_aic
+
+# BIC
+train_auto_bic <- auto.arima(train, seasonal=FALSE, trace=TRUE, ic = c("bic"))
+train_auto_bic
+
+# Look at best p, d, q values
+arimaorder(train_auto_aic) #(2,0,3)
+arimaorder(train_auto_bic) #(2,0,2)
+
+# Check Residuals
+checkresiduals(train_auto_aic) #p-value < 0.01
+checkresiduals(train_auto_bic) #p-value < 0.01
+
+# Shapiro-Wilk Normality Test
+shapiro.test(train_auto_aic$residuals) #p-value < 0.01
+shapiro.test(train_auto_bic$residuals) #p-value < 0.01
+
+# QQ Normality Plot
+qqnorm(train_auto_aic$residuals)
+qqnorm(train_auto_bic$residuals)
+
+```
+
+#### AIC/BIC:
+
+* No, AICc and BIC select different models with this dataset. The best AICc model was ARIMA(2,0,3) whereas the best BIC model was ARIMA(2,0,2).
+
+#### Residual Results
+
+* The best performing AICc and BIC models had similar residual results. They both show autocorrelation at later lags, are right skewed in their distribution, and have some patterns in their plots. This indicates they do not resemble white noise. Their corresponding Ljung-Box test results both had small p-values indicated with Reject the Null Nypothesis and conclude autocorrelation exists.
+
+#### Shapiro-Wilk Normality Test Results
+
+* Both models show similar results for this test with small p-values. This indicates we Reject the Null Hypothesis and conclude the data deviates from a normal distribution.
+
+#### Q-Q Plot Results
+
+* These plots confirm the Shapiro-Wilk test results and indicate the data deviates from a normal distribution, especially when we examine quantiles -3 and 3.
+
+
+# Question 4
+
+Build a day of the week seasonal 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃,𝑄,𝐷)𝑠 model using the training dataset
+and R auto.arima() function.
+
+```{r q4, include=TRUE}
+
+weeklydata <- ts(alldata, frequency = 168) # There are 168 hours in 1 week
+
+train_auto_week <- auto.arima(weeklydata, 
+                         seasonal = TRUE, 
+                         trace = TRUE)
+
+train_auto_week
+
+```
+
+# Question 5
+
+Use the 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃, 𝑄, 𝐷)𝑠 model from Question 4 to forecast for July 1st (which is a
+Monday). Plot your result.
+
+```{r q5, include=TRUE}
+
+week_forecast <- forecast(train_auto_week, h=24) # Forecast 24-hour period starting July 1st
+autoplot(week_forecast)
+
+```
+
+
+
+# Question 6
+
+Build a hour of the day seasonal 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃,𝑄,𝐷)𝑠model using the training dataset and
+R auto.arima() function.
+
+```{r q6, include=TRUE}
+
+hourly <- ts(alldata, frequency = 24) # 24 hours in day
+
+hour_auto <- auto.arima(hourly, 
+                        seasonal = TRUE, 
+                        trace = TRUE)
+hour_auto
+
+```
+
+
+# Question 7
+
+Use the 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃, 𝑄, 𝐷)𝑠 model from Question 6 to forecast for July 1st (which is a
+Monday). Plot your result.
+
+```{r q7, include=TRUE}
+
+hour_forecast <- forecast(hour_auto, h=24) # Forecast 24-hour period starting July 1st
+autoplot(hour_forecast)
+
+```
+
+
+# Question 8
+
+Compare the forecast of the models from Questions 5 and 7 for July 1 8:00, 9:00, 17:00 and
+18:00, which model is better (Questions 4 or 6)?
+
+```{r q8, include=TRUE}
+
+times <- c("2013-07-01 08:00:00", #1,233
+           "2013-07-01 09:00:00", #1,110
+           "2013-07-01 17:00:00", #1,142
+           "2013-07-01 18:00:00") #1,129
+
+# For July, get the indexes that match the times
+time_indexes <- which(as.character(time_index)[360:384] %in% times) # 9, 10, 18, 19
+test[time_indexes]
+
+# Use the same indexes for the Actual test set and forecasted to compare
+week_error <- test[time_indexes] - week_forecast$mean[time_indexes] #Actual - Pred
+hour_error <- test[time_indexes] - hour_forecast$mean[time_indexes]
+
+# Calculate sum of squared errors
+week_sse <- sum(week_error^2)
+hour_sse <- sum(hour_error^2)
+
+# Compare: is the week forecast error higher?
+week_sse > hour_sse # FALSE
+
+paste("Weekly Forecast Model SSE =", round(week_sse,2))
+paste("Hour Forecast Model SSE =", round(hour_sse,2))
+
+```
+
+**Answer:** The Weekly model from Question #4 is better. This model had an SSE of 30,876 and the Hourly model from Question #6 had an SSE of 89,982.

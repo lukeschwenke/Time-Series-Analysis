@@ -1,0 +1,258 @@
+---
+title: "Time Series Homework #5"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+For this assignment, you will use a Manufacturer's Stocks of evaporated and sweetened condensed milk
+1971/1 – 1980/12 dataset from FPP package. (Dataset: condmilk.rda).
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+library(forecast)
+library(tseries)
+library(TSA)
+library(readxl)
+library(purrr)
+
+```
+
+# Question 1
+
+Load the condmilk.rda dataset and split it into a training dataset (1971/1 – 1979/12) and a test dataset (1980/1 – 1980/12)
+
+```{r q1, include=TRUE}
+
+load("/Users/lmschwenke/Downloads/condmilk.rda")
+
+train <- window(condmilk, start = c(1971,1), end = c(1979,12))
+test <- window(condmilk, start = c(1980,1), end = c(1980,12))
+
+```
+
+# Question 2
+
+Plot the training dataset. Is Box-Cox transformation necessary for this data? Why?
+
+```{r q2, include=TRUE}
+
+load("/Users/lmschwenke/Downloads/condmilk.rda")
+
+ts.plot(train)
+
+BoxCox(train, lambda="auto") %>% ts.plot()
+
+```
+
+
+**Answer:** Yes, a Box Cox transformation is needed as the variance is not constant / is changing over time. It is getting more narrow as time approaches 1980. Once we plot the box-cox transformed version the variance is more static over time.
+
+# Question 3
+
+Is the training dataset stationary? If not, find an appropriate differencing which yields seasonal and
+trend stationary training dataset. Plot the ACF and PACF to determine if the detrended and
+deseasonalized time series is stationary. 
+
+```{r q3, include=TRUE}
+
+tsdisplay(train)
+
+```
+
+
+```{r q32, include=TRUE}
+
+# 1st Differencing
+tsdisplay(diff(train, differences=1))
+
+# 2nd Differencing
+tsdisplay(diff(train, differences=2))
+
+# 3rd Differencing
+tsdisplay(diff(train, differences=3))
+
+```
+
+**Answer:** No, the train dataset is not stationary as there is clearly seasonality in this dataset. After applying up to 3rd differencing, the data appears a bit more stationary with less significant lags in the ACF and PACF graphs. The time plot does not have as clear of seasonality anymore which also indicates stationarity. We cannot run KPSS/ADF tests on this dataset to test for stationarity as there is seasonality.
+
+
+# Question 4
+
+Build two 𝐴𝑅𝐼𝑀𝐴(𝑝, 𝑑, 𝑞)(𝑃,𝑄, 𝐷)𝑠 models using the training dataset and auto.arima() function.
+
+* Model 1: Let the auto.arima() function determine the best order of non-seasonal and seasonal
+differencing.
+* Model 2: Set the order of seasonal-differencing 𝑑 to 1 and 𝐷 to 1.
+
+Report the resulting 𝑝, 𝑑, 𝑞, 𝑃,𝐷,𝑄, 𝑠 and the coefficients values for all cases and compare their AICc and BIC values.
+
+```{r q4, include=TRUE}
+
+# Model 1
+m1 <- auto.arima(train, 
+                 lambda = BoxCox.lambda(train),
+                 seasonal = TRUE,
+                 trace = TRUE)
+m1
+arimaorder(m1)
+
+# Model 2
+m2 <- auto.arima(train,
+                 d = 1,
+                 D = 1,
+                 lambda = BoxCox.lambda(train),
+                 seasonal = TRUE,
+                 trace = TRUE)
+
+m2
+arimaorder(m2)
+
+```
+
+**Values Comparison:**
+
+* Model 1 returned an order of ARIMA(1,0,0)(2,1,0)[12], AICc = -410.4, BIC = -400.55
+
+* Model 2 returned an order of ARIMA(1,1,1)(2,1,0)[12], AICc = -399.58, BIC = -387.48
+
+From the AICc/BIC values we can conclude Model 1 is better because the values are smaller (more negative)
+
+
+# Question 5
+
+Plot the residuals ACF of both models from part 4 and use the Ljung-Box Test with lag 12 to verify your
+conclusion.
+
+```{r q5, include=TRUE}
+
+# ACF of Residuals
+acf(m1$residuals)
+acf(m2$residuals)
+
+# Ljung-Box Test - Residuals
+Box.test(m1$residuals, 
+         lag = 12, 
+         type = c("Ljung-Box")) #p-value=0.06
+
+Box.test(m2$residuals, 
+         lag = 12, 
+         type = c("Ljung-Box")) #p-value=0.07
+
+```
+
+
+**Results:** The ACF plots show only 1 signifant lag each indicating there is most likely not autocorrelation present (most lags are below the threshold). Additionally, both Ljung-Box tests showing p-values above 0.05 (significance level) indicate we fail to reject the null hypothesis and conclude that there is no autocorrelation in the residuals. It is important to note that this answer would be the opposite (autocorrelation exists) if the significance level was at 10% rather than 5%.
+
+
+# Question 6
+
+Use both models from part 4 and the h-period argument in the forecast() function to forecast each
+month of 1980 (i.e., Jan, Feb, …, Dec.) Plot the test dataset and forecasted values.
+
+```{r q6, include=TRUE}
+fcast_m1 <- forecast(m1, h=12)
+fcast_m2 <- forecast(m2, h=12)
+
+plot_data <- data.frame(x = c(1:12),
+                       Test = test,
+                       Model1 = fcast_m1$mean,
+                       Model2 = fcast_m2$mean)
+
+fcast_plot <- ggplot(plot_data, aes(x)) +  
+  geom_line(aes(y = Test, color = "orange")) +
+  geom_line(aes(y = Model1, color = "purple")) +
+  geom_line(aes(y = Model2, color = "cyan")) +
+  scale_color_identity(name = '',
+                       breaks = c('orange', 'purple', 'cyan'),
+                       labels = c("Test", "Model1", "Model2"),
+                       guide = 'legend') + 
+  scale_x_continuous(name="12 Months of 1980", breaks = seq(1, 12, by = 1)) +
+  scale_y_continuous(name="Forecasted Value") + ggtitle('Forecasted Models & Test Values')
+  xlab(" ")
+fcast_plot
+
+```
+
+# Question 7
+
+Compare the forecast with the actual test data by calculating the Mean Absolute Percentage Error
+(MAPE) and Mean Squared Error (MSE). Which model is better to forecast the Manufacturer's Stocks for
+each month of 1980 (i.e., Jan, Feb, …, Dec)? Why?
+
+```{r q7, include=TRUE}
+
+# MAPE
+mape_m1 <- mean(abs((test-fcast_m1$mean)/test)) * 100
+mape_m2 <- mean(abs((test-fcast_m2$mean)/test)) * 100
+
+print(paste("MAPE Model #1:", round(mape_m1,4)))
+print(paste("MAPE Model #2:", round(mape_m2,4)))
+
+# MSE
+mse_m1 <- mean((test - fcast_m1$mean)^2)
+mse_m2 <- mean((test - fcast_m2$mean)^2)
+
+print(paste("MSE Model #1:", round(mse_m1,4)))
+print(paste("MSE Model #2:", round(mse_m2,4)))
+
+```
+
+
+**Answer:** Both models have similar errors. When comparing MAPE Model #1 has a slightly better value at 18.47 compared to 18.51. When comparing MSE, Model #2 has a slightly better value at 303.4596 compared to 303.4648. Both models are therefore adequate in this forecasting scenario.
+
+# Question 8
+
+Forecast each month of 1980 (i.e., Jan, Feb, …, Dec.) using the seasonal naïve forecast method. Plot the test dataset and forecasted values and compare the forecast with the actual test data by calculating the Mean Absolute Percentage Error (MAPE) and Mean Squared Error (MSE). 
+
+```{r q8, include=TRUE}
+
+snaive_fcast <- snaive(train, h=12)
+
+autoplot(train) +
+  autolayer(snaive_fcast, series = "Seasonal Naive", alpha = 1) +
+  autolayer(test, series = "Test", alpha = 1) +
+  labs(x="12 Months of 1980", y="Forecast", title="Test vs. Seasonal Naive Forecasts") +
+  guides(colour = guide_legend("Model"))
+
+
+```
+
+```{r q82, include=TRUE}
+
+# MAPE
+mape_snaive <- mean(abs((test-snaive_fcast$mean)/test)) * 100
+
+# MSE
+mse_snaive <- mean((test - snaive_fcast$mean)^2)
+
+print(paste("MAPE - Seasonal Naive:", round(mape_snaive,4)))
+print(paste("MSE - Seasonal Naive:", round(mse_snaive,4)))
+
+```
+
+# Question 9
+
+Use the snaive() function to forecast each month of 1980 (i.e., Test Period.) Did your best model beat
+the seasonal naïve approach?
+
+```{r q9, include=TRUE}
+
+print(paste("MAPE - Seasonal Naive:", round(mape_snaive,4)))
+print(paste("MSE - Seasonal Naive:", round(mse_snaive,4)))
+
+writeLines("\n")
+print(paste("MAPE Model #1:", round(mape_m1,4)))
+print(paste("MAPE Model #2:", round(mape_m2,4)))
+print(paste("MSE Model #1:", round(mse_m1,4)))
+print(paste("MSE Model #2:", round(mse_m2,4)))
+
+```
+
+**Answer:** No, my best model did not beat the Seaonsal Naive method. The Seasonal Naive model outperforms both Model #1 and Model #2 with a MAPE value of 17.98 and an MSE value of 277.83. Therefore we should use the simpler Seasonal Naive method to make forecasts for this time period.
+
+

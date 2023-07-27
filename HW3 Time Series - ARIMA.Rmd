@@ -1,0 +1,204 @@
+---
+title: "Time Series - Homework #3"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+library(forecast)
+library(tseries)
+library(TSA)
+
+```
+
+# Question 1
+
+Load the usgdp.rda dataset and split it into a training dataset (1960 - 2012) and a test dataset (2013 - 2017)
+
+```{r q1, include=TRUE}
+
+load('usgdp.rda')
+
+# convert to data frame and select GDP column
+gdp <- as.data.frame(usgdp)
+gdp <- gdp[,c(3,4)]
+
+# Train Set = 1960-2012
+train <- gdp[gdp$Year <= 2012, ] 
+train <- ts(train$GDP, start = 1960, frequency = 1)
+
+# Test Set = 2013-2017
+test <- gdp[gdp$Year >= 2013, ]
+test <- ts(test$GDP, start = 2013, frequency = 1)
+
+```
+
+# Question 2
+
+Plot the training dataset. Is the Box-Cox transformation necessary for this data? Why?
+
+```{r q2, include=TRUE}
+
+autoplot(train)
+
+lambda_val <- BoxCox.lambda(train)
+box_train <- BoxCox(train, lambda=lambda_val)
+autoplot(box_train)
+
+```
+
+**Answer: A Box-Cox transformation should be used as the variance is slightly changing. Comparing the time plots of the non-transformed and the Box Cox transformed shows the transformed one is more constant (linear) in variance**
+
+# Question 3
+
+Plot the 1st and 2nd order difference of the data. Apply KPSS Test for Stationarity to determine which difference order results in a stationary dataset.
+
+```{r q3, include=TRUE}
+
+diff1 <- diff(box_train)
+plot(diff1, main = "1st Order Difference on Box-Cox Train")
+
+# 2nd order difference
+diff2 <- diff(diff1)
+plot(diff2, main = "2nd Order Difference on Box-Cox Train")
+
+# Testing 1st order difference
+kpss_test_diff1 <- kpss.test(diff1)
+print(kpss_test_diff1)
+
+# Testing 2nd order difference
+kpss_test_diff2 <- kpss.test(diff2)
+print(kpss_test_diff2)
+
+```
+
+
+**Answer:** The first-order differencing returned a p-value of 0.1. This means we Fail to Reject the null hypothesis at a 5% significance level and conclude the data is stationary. The second-order differencing also returned a p-value of 0.1. This means we Fail to Reject the null hypothesis at a 5% level and conclude the data is stationary. **Therefore both first and second-order differencing are valid for this dataset.**
+
+# Question 4
+
+Fit a suitable ARIMA model to the training dataset using the auto.arima() function. Remember to transform the data first, if necessary, by setting the 𝑙𝑎𝑚𝑏𝑑𝑎 argument. Report the resulting 𝑝, 𝑑, 𝑞 and the coefficients values.
+
+```{r q4, include=TRUE}
+
+print('Auto-ARIMA on Train')
+train_auto <- auto.arima(train, trace=TRUE, lambda="auto")
+arimaorder(train_auto)
+
+Arima(train, order=c(1,1,0), lambda = "auto")
+
+```
+
+Coefficients:
+ar1 = 0.9273 | s.e. = 0.0445   
+
+# Question 5
+
+Compute the sample Extended ACF (EACF) and use the Arima() function to try some other plausible models by experimenting with the orders chosen. Limit your models to 𝑞, 𝑝 ≤ 2 and 𝑑 ≤ 2. Use the model summary() function to compare the Corrected Akaike information criterion (i.e., AICc) values (Note: Smaller values indicated better models).
+
+```{r q5, include=TRUE}
+
+#tsdisplay(train)
+
+eacf(box_train)
+
+# Possible Combinations ARIMA(p,d,q)
+## 1 = (p=1, d=1, q=1)
+## 2 = (p=1, d=1, q=2)
+## 3 = (p=2, d=1, q=1)
+## 4 = (p=2, d=2, q=0)
+## 5 = (p=2, d=2, q=2)
+
+combo_1 = Arima(train, order=c(1,1,1), lambda="auto")
+combo_2 = Arima(train, order=c(1,1,2), lambda="auto")
+combo_3 = Arima(train, order=c(2,1,1), lambda="auto")
+combo_4 = Arima(train, order=c(2,2,0), lambda="auto")
+combo_5 = Arima(train, order=c(2,2,1), lambda="auto")
+combo_6 = Arima(train, order=c(2,2,2), lambda="auto")
+
+# Evaluate
+for (model in list(combo_1, combo_2, combo_3, combo_4, combo_5, combo_6)) {
+  print(summary(model))
+  cat("\n")
+}
+
+```
+
+**Answer:**
+
+* Combination #1 - ARIMA(1,1,1) - AICc = 455.01
+* Combination #2 - ARIMA(1,1,2) - AICc = 454.61
+* Combination #3 - ARIMA(2,1,1) - AICc = 454.89
+* Combination #4 - ARIMA(2,2,0) - AICc = 447.63
+* Combination #5 - ARIMA(2,2,1) - AICc = 444.47
+* Combination #6 - ARIMA(2,2,2) - AICc = 443.08 (BEST)
+
+**The best combination on the train dataset was Box-Cox Transformed ARIMA(2,2,2) with an AICc of 443.08**
+
+# Question 6
+
+Use the model chosen in Question 4 to forecast and plot the GDP forecasts with 80 and 95 % confidence levels for 2013 - 2017 (Test Period)
+
+```{r q6, include=TRUE}
+
+fit <- Arima(train, order = c(2,2,2), lambda="auto")
+
+fcast <- forecast(fit, h=5, level = c(.8, .95))
+fcast
+
+#win.graph(width=12, height=6,pointsize=12)
+plot(fcast)
+
+```
+
+# Question 7
+
+Compare your forecasts with the actual values using error = actual - estimate and plot the errors. (Note: Use the forecast $mean element for the forecast estimate)
+
+```{r q7, include=TRUE}
+
+fcast$mean
+
+errors = test - fcast$mean
+errors
+
+#plot(fcast$mean)
+#plot(test)
+
+
+```
+
+# Question 8
+
+Calculate the sum of squared errors.
+
+```{r q8, include=TRUE}
+
+sum(errors^2)
+
+```
+# Question 9
+
+Use the naive() function to forecast for 2013 - 2017 (Test Period.) Did your best model beat the naïve approach?
+
+```{r q9, include=TRUE}
+
+n_fcast <- naive(train, h=5)
+n_fcast$mean
+
+n_errors = test - n_fcast$mean
+
+sum(n_errors**2)
+
+paste('Naive Errors:', sum(n_errors**2))
+paste('My Model Errors:', sum(errors**2))
+
+```
+
+**Answer:** Yes, my model beat the Naive model. My model had errors 5.11e+24 and the Naive model had errors 2.23e+25
