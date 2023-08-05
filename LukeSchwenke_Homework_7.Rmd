@@ -1,0 +1,185 @@
+---
+title: "Time Series Homework 7"
+author: "Luke Schwenke"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+For this assignment, you are given 1) the total monthly takings from accommodation. 2) the monthly total room nights occupied at hotels, motels, and guest houses in Victoria, Australia, 3) and the monthly Consumer Price Index (CPI) between January 1980 and June 1995 (Dataset: motel.rda). Total monthly takings are in thousands of Australian dollars.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(ggplot2)
+library(expsmooth)
+library(forecast)
+library(tseries)
+library(TSA)
+library(readxl)
+library(purrr)
+
+```
+
+# Question 1
+
+Load the data and calculate the average cost of a night’s accommodation in Victoria each month (i.e., Cost variable).
+
+a) Plot the CPI and Cost time series.
+
+b) Plot the Cost time series against the CPI time series and calculate the correlation between CPI
+and Cost.
+
+Discuss your results and explain why the logarithms of both variables need to be taken before fitting any models.
+
+
+```{r q1, include=TRUE}
+
+load('motel.rda')
+
+colnames(motel)
+# Create cost variable by dividing total Takings (column 2) / Roomnights (column 1)
+cost = 1000 * motel[,"Takings"] / motel[,"Roomnights"]
+motel <- cbind(motel, cost)
+colnames(motel) <- c("Roomnights", "Takings", "CPI", "Cost")
+
+# Plots
+plot.ts(motel[,3], ylab='CPI', main='CPI over Time')
+plot.ts(motel[,4], ylab='Cost', main='Cost over Time')
+plot(motel[,3], motel[,4], xlab='CPI', ylab='Cost', main='CPI vs. Cost')
+
+# Correlation
+paste("Correlation between CPI and Cost:", cor(motel[,3], motel[,4]))
+
+```
+
+c) Plot the 𝑙𝑜𝑔(𝐶𝑃𝐼) and 𝑙𝑜𝑔(𝐶𝑜𝑠𝑡) time series and calculate the correlation between the logarithms of both CPI and Cost.
+
+```{r q12, include=TRUE}
+
+plot.ts(log(motel[,3]), ylab='Log of CPI and Cost', main='Log of CPI & Log of Cost over Time', col=1)
+lines(log(motel[,4]), col=2)
+legend("bottomright",legend=c("Log of CPI",
+                          "Log of Cost"),col=1:2,lty=1)
+
+# Correlation
+paste("Correlation between CPI and Cost:", cor(log(motel[,3]), log(motel[,4])))
+
+
+```
+
+
+**Answer:** The correlation between CPI and Cost indicates that as the Consumer Price Index goes up the Cost goes up. They have a very strong correlation at 99%. Logarithms should be used because these variables have strong upward trend which indicates non-stationarity. This transformation can help make the variables more stationary.
+
+
+# Question 2
+
+a) Use the linear model with time series components function tslm() to fit a linear model to the 𝑙𝑜𝑔(𝐶𝑜𝑠𝑡) time series as a function of the 𝑙𝑜𝑔(𝐶𝑃𝐼) time series (i.e., CPI➔Independent variable, Cost➔Dependent variable).
+
+b) Plot 𝑙𝑜𝑔(𝐶𝑃𝐼) against 𝑙𝑜𝑔(𝐶𝑜𝑠𝑡) and the fitted trend.
+
+c) Use the summary() function to summarize the generated model, and the checkresiduals()
+function to evaluate the residuals.
+
+```{r q2, include=TRUE}
+
+# a) Log(Cost) as a function of Log(CPI)
+m1 <- tslm(log(motel[,4]) ~ log(motel[,3]))
+m1
+
+# b) Plot of Log Cost/CPI and the fitted line from the model
+plot(log(motel[,3]), log(motel[,4]), xlab='Log of CPI', ylab='Log of Cost', main='Log CPI vs. Log Cost')
+abline(m1, col="blue")
+
+# c) 
+summary(m1)
+checkresiduals(m1)
+```
+
+
+**Answer:** There is a strong correlation between log CPI and log Cost. The residuals of the model are fairly normally distributed and the time plot does not indicate a pattern. The ACF plot of the residuals indicate a lot of significant lags meaning the data is not white noise and there is autocorrelation present. The small p-value of near 0 on the Breusch-Godfrey test indicates we reject the null hypothesis and conclude autocorrelation is present. The fitted line shows the model fits the data well -- this is also indicated by the 98.6% R-squared value meaning that 98.6% of the variation in log of cost can be explained by the log of CPI. The p-value and F-statistic indicates this model is statistically significant and both coefficients are.
+
+# Question 3
+
+Use the auto.arima() function to fit an appropriate regression model with ARIMA errors to the Cost and CPI time series(i.e., CPI➔Independent variable, Cost➔Dependent variable). Set the Order of seasonal- differencing argument, D, to 1 and the ‘lambda’ argument to 0 to reflect a logarithmic transformation.
+
+a) Use the summary() function to summarize the generated model.
+
+b) Use the checkresiduals() function to evaluate the residuals.
+
+```{r q3, include=TRUE}
+
+m2 <- auto.arima(motel[,4], xreg=motel[,3], D=1, lambda=0)
+arimaorder(m2)
+
+summary(m2)
+checkresiduals(m2)
+
+```
+
+**Answers:**
+
+* The Auto Arima function with differencing, log transformation, and arima errors returned a model with ARIMA(0,1,1)(0,1,2)[12]. This model had an AICc value of -863.78, RMSE of 31%, and MAE of 22.6%.
+
+* The residuals of this model are better because the ACF plot indicates only 1 significant lag. The residuals are also normally distributed and the time plot does not show systematic patterns. This indicates the model residuals are white noise. This is confirmed by the Ljung-Box test p-value of 0.38 meaning we fail to reject the null hypothesis and conclude there is no autocorrelation.
+
+# Question 4
+
+a) Calculate and plot a naïve forecast of CPI for the next 18 months.
+
+b) Forecast and plot the average price per room (i.e., Cost) for the next 18 months using the fitted
+model from Question 3 and the naïve forecast of CPI.
+
+```{r q4, include=TRUE}
+
+# a) Naive forecast on CPI
+naive_cpi <- naive(motel[,3], h=18)
+plot(naive_cpi, main="Naive Forecast - CPI")
+
+# b) Naive forecast on Cost
+naive_cost <- forecast(m2, xreg = naive_cpi$mean, h=18)
+plot(naive_cost, main = "Cost Forecast with Naive CPI")
+
+
+```
+
+
+**Answer:** The naive CPI forecast means the same value will be predicted in future periods. Once we apply this methodology with ARIMA errors from the naive CPI model into the forecast for Cost the prediction is more variable (not flat).
+
+# Question 5
+
+a) Use the VAR() function to fit a VAR(10) model to the 𝑙𝑜𝑔(𝐶𝑜𝑠𝑡) and 𝑙𝑜𝑔(𝐶𝑃𝐼) time series. Set the ‘type’ and ‘season’ arguments to 'both' and 12, respectively.
+
+b) Forecast and plot the average price per room (i.e., Cost) and CPI for the next 18 months using your fitted model.
+
+c) Plot the residuals’ ACF.
+
+
+```{r q5, include=TRUE}
+library(vars)
+
+# Generate log columns
+log_cpi <- log(motel[,'CPI'])
+log_cost <- log(motel[,'Cost'])
+
+binded <- cbind(log_cpi, log_cost)
+
+# (a)
+var_model <- VAR(binded, p = 10, type = c( "both"),season = 12)
+
+# (b)
+forecast(var_model, h=18) %>% autoplot()
+
+# (c)
+acf(resid(var_model)[, 1], main="CPI - Log")
+acf(resid(var_model)[, 2], main="Cost - Log")
+
+acf(resid(var_model))
+
+
+```
+
+**Answer:** The forecast of log of CPI is more flat but increases in variance slightly over time. This makes sense as further predictions should have more variability. The forecast of log of cost is more variable in general than CPI but this matches the historical pattern of the data.
+
+The individual ACF residuals plots of the CPI and Cost variables show no signifant lags, indicating no autocorrelation and therefore that the residuals are the ideal white noise.
+
